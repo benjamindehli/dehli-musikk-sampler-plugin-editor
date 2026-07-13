@@ -1,4 +1,5 @@
 #include "StudioMainComponent.h"
+#include "SampleImport.h"
 
 namespace dmse_studio
 {
@@ -78,6 +79,61 @@ StudioMainComponent::StudioMainComponent()
     addAndMakeVisible (pathLabel);
 
     modelTree.onSelect = [this] (NodeRef ref) { inspector.show (ref); };
+    modelTree.onImportFiles = [this] (NodeRef target, const juce::StringArray& files)
+    {
+        importSamples (target, files);
+    };
+    modelTree.onAddGroup = [this] (int modeIndex)
+    {
+        if (project == nullptr) return;
+        auto& lib = project->getModel();
+        if (modeIndex < 0 || modeIndex >= lib.modes.size()) return;
+        project->beginEdit();
+        dm::Group g;
+        g.uid = "group_" + juce::String (lib.modes.getReference (modeIndex).groups.size());
+        lib.modes.getReference (modeIndex).groups.add (std::move (g));
+        applyCommittedEdit();
+    };
+    modelTree.onRemoveNode = [this] (NodeRef ref)
+    {
+        if (project == nullptr) return;
+        auto& lib = project->getModel();
+        if (ref.mode < 0 || ref.mode >= lib.modes.size()) return;
+        auto& m = lib.modes.getReference (ref.mode);
+        project->beginEdit();
+        if (ref.kind == NodeRef::Kind::sample)
+        {
+            if (ref.a >= 0 && ref.a < m.groups.size()
+                && ref.b >= 0 && ref.b < m.groups.getReference (ref.a).samples.size())
+                m.groups.getReference (ref.a).samples.remove (ref.b);
+        }
+        else if (ref.kind == NodeRef::Kind::group)
+        {
+            if (ref.a >= 0 && ref.a < m.groups.size())
+                m.groups.remove (ref.a);   // dangling bindings show up in the lint
+        }
+        else if (ref.kind == NodeRef::Kind::effect)
+        {
+            if (ref.a >= 0 && ref.a < m.effects.size())
+                m.effects.remove (ref.a);
+        }
+        else if (ref.kind == NodeRef::Kind::groupEffect)
+        {
+            if (ref.a >= 0 && ref.a < m.groups.size()
+                && ref.b >= 0 && ref.b < m.groups.getReference (ref.a).effects.size())
+                m.groups.getReference (ref.a).effects.remove (ref.b);
+        }
+        applyCommittedEdit();
+    };
+    modelTree.onSpreadRanges = [this] (NodeRef ref)
+    {
+        if (auto* g = resolveGroup (ref))
+        {
+            project->beginEdit();
+            spreadRanges (*g);
+            applyCommittedEdit();
+        }
+    };
     addAndMakeVisible (modelTree);
 
     inspector.getModel   = [this] () -> dm::PresetLibrary& { return project->getModel(); };
@@ -217,6 +273,99 @@ void StudioMainComponent::openRepo (const juce::File& repoDir)
     pathLabel.setText (project->getRepoRoot().getFullPathName(), juce::dontSendNotification);
     refreshProblems();
     updateToolbar();
+}
+
+dm::Group* StudioMainComponent::resolveGroup (NodeRef ref)
+{
+    if (project == nullptr)
+        return nullptr;
+    auto& lib = project->getModel();
+    if (ref.mode < 0 || ref.mode >= lib.modes.size())
+        return nullptr;
+    auto& m = lib.modes.getReference (ref.mode);
+    const int gi = (ref.kind == NodeRef::Kind::group
+                    || ref.kind == NodeRef::Kind::sample
+                    || ref.kind == NodeRef::Kind::groupEffect) ? ref.a : -1;
+    return gi >= 0 && gi < m.groups.size() ? &m.groups.getReference (gi) : nullptr;
+}
+
+void StudioMainComponent::importSamples (NodeRef target, const juce::StringArray& files)
+{
+    if (project == nullptr)
+        return;
+
+    // Resolve the destination group: the dropped-on / right-clicked group, else a
+    // mode's only group, else give up with a hint.
+    auto* g = resolveGroup (target);
+    if (g == nullptr && target.mode >= 0 && target.mode < project->getModel().modes.size())
+    {
+        auto& m = project->getModel().modes.getReference (target.mode);
+        if (m.groups.size() == 1)
+            g = &m.groups.getReference (0);
+    }
+    if (g == nullptr)
+    {
+        problems.setText ("Import: drop the files onto a specific GROUP in the tree "
+                          "(or right-click a group and choose Import samples...).");
+        return;
+    }
+
+    project->beginEdit();
+    juce::StringArray log;
+    int imported = 0;
+    bool anyRoundRobin = false;
+    for (const auto& path : files)
+    {
+        const juce::File f (path);
+        juce::String error;
+        auto stemInUse = [this] (const juce::String& stem)
+        {
+            const auto id = "flac:" + stem;
+            for (const auto& m : project->getModel().modes)
+                for (const auto& grp : m.groups)
+                    for (const auto& smp : grp.samples)
+                        if (smp.source == id)
+                            return true;
+            return false;
+        };
+        const auto result = transcodeToFlac (f, project->getSamplesDir(), stemInUse, error);
+        if (! result)
+        {
+            log.add ("FAILED " + f.getFileName() + ": " + error);
+            continue;
+        }
+        dm::Sample s;
+        s.source       = "flac:" + result->stem;
+        s.sampleRate   = result->sampleRate;
+        s.lengthFrames = (int) result->frames;
+        const auto parsed = parseSampleName (result->stem);
+        s.loNote = s.hiNote = s.rootNote = parsed.note.value_or (60);
+        s.pitchKeyTrack = false;
+        s.seqPosition = parsed.roundRobin;
+        anyRoundRobin = anyRoundRobin || parsed.roundRobin.has_value();
+        g->samples.add (std::move (s));
+        ++imported;
+        log.add ("imported " + result->stem + " -> note " + juce::String (parsed.note.value_or (60))
+                 + (parsed.roundRobin ? "  rr slot " + juce::String (*parsed.roundRobin) : juce::String())
+                 + (parsed.note ? juce::String() : juce::String ("  (no note in name - placed at 60)")));
+    }
+
+    // Files carried round-robin slots → make the group actually cycle them.
+    if (anyRoundRobin && ! g->roundRobin.has_value())
+    {
+        dm::RoundRobin rr;
+        rr.mode = "round_robin";
+        g->roundRobin = rr;
+        log.add ("group set to round_robin (file names carry rr slots)");
+    }
+    applyCommittedEdit();
+
+    // Show the import summary on top of the refreshed lint.
+    problems.setText ("Imported " + juce::String (imported) + "/" + juce::String (files.size())
+                      + " file(s) into the group. Right-click the group for "
+                      + juce::String::fromUTF8 ("\u201c") + "Auto-spread ranges"
+                      + juce::String::fromUTF8 ("\u201d") + " if this is a sparse multi-sample.\n"
+                      + log.joinIntoString ("\n") + "\n\n" + problems.getText());
 }
 
 void StudioMainComponent::refreshProblems()

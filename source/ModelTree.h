@@ -37,10 +37,17 @@ struct NodeRef
     }
 };
 
-class ModelTree : public juce::Component
+class ModelTree : public juce::Component,
+                  public juce::FileDragAndDropTarget
 {
 public:
     std::function<void (NodeRef)> onSelect;
+
+    // Structural actions (milestone 3) — the Studio implements these.
+    std::function<void (NodeRef, const juce::StringArray&)> onImportFiles;   // group (or child) + audio files
+    std::function<void (int modeIndex)> onAddGroup;
+    std::function<void (NodeRef)> onRemoveNode;      // sample / group / effect
+    std::function<void (NodeRef)> onSpreadRanges;    // group: stretch zones + pitch-track
 
     ModelTree()
     {
@@ -54,10 +61,34 @@ public:
 
     void resized() override { tree.setBounds (getLocalBounds()); }
 
+    // ── audio-file drag-drop (onto a group, or a sample inside one) ─────────
+    bool isInterestedInFileDrag (const juce::StringArray& files) override
+    {
+        for (const auto& f : files)
+            if (f.endsWithIgnoreCase (".wav") || f.endsWithIgnoreCase (".aif")
+                || f.endsWithIgnoreCase (".aiff") || f.endsWithIgnoreCase (".flac"))
+                return true;
+        return false;
+    }
+
+    void filesDropped (const juce::StringArray& files, int x, int y) override
+    {
+        if (! onImportFiles)
+            return;
+        juce::ignoreUnused (x);
+        NodeRef target;
+        if (auto* item = dynamic_cast<Item*> (tree.getItemAt (y)))
+            target = item->ref;
+        onImportFiles (target, files);
+    }
+
     /** Rebuild from the model, keeping the previous selection when it still resolves. */
     void rebuild (const dm::PresetLibrary& lib)
     {
         const auto keep = selected;
+        std::unique_ptr<juce::XmlElement> openness;
+        if (tree.getRootItem() != nullptr)
+            openness = tree.getOpennessState (true);   // keep expanded levels across rebuilds
         tree.setRootItem (nullptr);
         root = std::make_unique<Item> (this, NodeRef { NodeRef::Kind::library }, lib.library);
 
@@ -123,8 +154,10 @@ public:
         }
 
         tree.setRootItem (root.get());
-        if (auto* first = root->getSubItem (0))
-            first->setOpen (true);
+        if (openness != nullptr)
+            tree.restoreOpennessState (*openness, false);
+        else if (auto* first = root->getSubItem (0))
+            first->setOpen (true);   // first build: open the first mode
 
         selected = {};
         if (keep.kind != NodeRef::Kind::none)
@@ -164,6 +197,13 @@ private:
             g.drawText (text, 4, 0, w - 4, h, juce::Justification::centredLeft);
         }
 
+        juce::String getUniqueName() const override
+        {
+            // Openness/selection state is stored by unique-name path — key it on the
+            // node's TEXT so it survives index shifts from structural edits.
+            return juce::String ((int) ref.kind) + ":" + text;
+        }
+
         void itemSelectionChanged (bool nowSelected) override
         {
             if (nowSelected && owner != nullptr)
@@ -172,6 +212,82 @@ private:
                 if (owner->onSelect)
                     owner->onSelect (ref);
             }
+        }
+
+        bool isInterestedInFileDrag (const juce::StringArray& files) override
+        {
+            const bool audioFiles = [&files]
+            {
+                for (const auto& f : files)
+                    if (f.endsWithIgnoreCase (".wav") || f.endsWithIgnoreCase (".aif")
+                        || f.endsWithIgnoreCase (".aiff") || f.endsWithIgnoreCase (".flac"))
+                        return true;
+                return false;
+            }();
+            return audioFiles && (ref.kind == NodeRef::Kind::group
+                                  || ref.kind == NodeRef::Kind::sample
+                                  || ref.kind == NodeRef::Kind::mode);
+        }
+
+        void filesDropped (const juce::StringArray& files, int) override
+        {
+            if (owner != nullptr && owner->onImportFiles)
+                owner->onImportFiles (ref, files);
+        }
+
+        void itemClicked (const juce::MouseEvent& e) override
+        {
+            if (! e.mods.isPopupMenu() || owner == nullptr)
+                return;
+            juce::PopupMenu m;
+            const auto k = ref.kind;
+            if (k == NodeRef::Kind::group)
+            {
+                m.addItem (1, "Import samples...");
+                m.addItem (4, "Auto-spread ranges (pitch-track the gaps)");
+                m.addSeparator();
+                m.addItem (3, "Remove group");
+            }
+            else if (k == NodeRef::Kind::mode)
+            {
+                m.addItem (2, "Add group");
+            }
+            else if (k == NodeRef::Kind::sample)
+            {
+                m.addItem (3, "Remove sample");
+            }
+            else if (k == NodeRef::Kind::effect || k == NodeRef::Kind::groupEffect)
+            {
+                m.addItem (3, "Remove effect");
+            }
+            else
+                return;
+
+            auto* o = owner;
+            const auto r = ref;
+            m.showMenuAsync ({}, [o, r] (int result)
+            {
+                if (o == nullptr) return;
+                if (result == 1 && o->onImportFiles)
+                {
+                    auto chooser = std::make_shared<juce::FileChooser> (
+                        "Import samples", juce::File(), "*.wav;*.aif;*.aiff;*.flac");
+                    chooser->launchAsync (juce::FileBrowserComponent::openMode
+                                          | juce::FileBrowserComponent::canSelectFiles
+                                          | juce::FileBrowserComponent::canSelectMultipleItems,
+                                          [o, r, chooser] (const juce::FileChooser& fc)
+                    {
+                        juce::StringArray paths;
+                        for (const auto& f : fc.getResults())
+                            paths.add (f.getFullPathName());
+                        if (! paths.isEmpty() && o->onImportFiles)
+                            o->onImportFiles (r, paths);
+                    });
+                }
+                else if (result == 2 && o->onAddGroup)      o->onAddGroup (r.mode);
+                else if (result == 3 && o->onRemoveNode)    o->onRemoveNode (r);
+                else if (result == 4 && o->onSpreadRanges)  o->onSpreadRanges (r);
+            });
         }
 
         ModelTree* owner;

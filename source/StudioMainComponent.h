@@ -34,6 +34,8 @@ private:
     void attachProcessor();          // player + editor onto the current processor
     void detachProcessor();
     void applyCommittedEdit();       // hot reload + refresh panels
+    void importSamples (NodeRef target, const juce::StringArray& files);
+    dm::Group* resolveGroup (NodeRef ref);
     void refreshProblems();
     void updateToolbar();
     void confirmDiscardThen (std::function<void()> proceed);

@@ -123,6 +123,7 @@ public:
     dm::ManifestPluginProcessor& getProcessor() { return *processor; }
     const dm::ManifestParseResult& getLint() const { return lint; }
     juce::File getRepoRoot() const  { return repoRoot; }
+    juce::File getSamplesDir() const { return assetsDir.getChildFile ("samples"); }
     juce::String getName() const    { return repoRoot.getFileName(); }
 
     ~PluginProject() = default;
@@ -186,6 +187,7 @@ private:
         // Refresh the lint from the edited model (same loader = same warnings).
         const auto json = dm::writeManifestToJson (model, true);
         lint = dm::loadManifestFromJson (json);
+        cache.clear();   // imported samples appear on disk between reloads
 
         juce::MemoryBlock state;
         int modeIndex = 0;

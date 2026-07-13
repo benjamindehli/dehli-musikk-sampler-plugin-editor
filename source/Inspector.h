@@ -121,6 +121,24 @@ public:
                     props.add (optNumber ("Vel track (empty = mode)",
                         [this, ref] { return group (ref)->velTrack; },
                         [this, ref] (std::optional<double> v) { group (ref)->velTrack = v; }));
+
+                    // Velocity layer range; 0..127 (the defaults) = no range stored.
+                    auto velField = [this, ref] (const char* name, int dm::VelocityRange::* member)
+                    {
+                        return intNumber (name,
+                            [this, ref, member]
+                            { return group (ref)->velocity.value_or (dm::VelocityRange{}).*member; },
+                            [this, ref, member] (int v)
+                            {
+                                auto& g = *group (ref);
+                                auto range = g.velocity.value_or (dm::VelocityRange{});
+                                range.*member = juce::jlimit (0, 127, v);
+                                g.velocity = (range.lo == 0 && range.hi == 127)
+                                                 ? std::nullopt : std::optional (range);
+                            });
+                    };
+                    props.add (velField ("Velocity low",  &dm::VelocityRange::lo));
+                    props.add (velField ("Velocity high", &dm::VelocityRange::hi));
                 }
                 break;
             }
