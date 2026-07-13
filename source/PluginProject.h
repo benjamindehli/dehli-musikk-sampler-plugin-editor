@@ -78,6 +78,16 @@ public:
         recreateProcessor();
     }
 
+    /** UI-only commit (GUI designer): dirty + lint refresh + swap the mode's ui
+        tree into the LIVE processor — no recreation, no sample decode. */
+    void commitUiEdit (int modeIndex)
+    {
+        dirty = true;
+        lint = dm::loadManifestFromJson (dm::writeManifestToJson (model, true));
+        if (processor != nullptr && modeIndex >= 0 && modeIndex < model.modes.size())
+            processor->applyUiEdit (modeIndex, model.modes.getReference (modeIndex).ui);
+    }
+
     bool canUndo() const { return ! undoStack.empty(); }
     bool canRedo() const { return ! redoStack.empty(); }
 

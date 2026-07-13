@@ -8,6 +8,7 @@
 #include "PluginProject.h"
 #include "ModelTree.h"
 #include "Inspector.h"
+#include "DesignerOverlay.h"
 #include <juce_audio_utils/juce_audio_utils.h>
 
 namespace dmse_studio
@@ -35,6 +36,7 @@ private:
     void detachProcessor();
     void applyCommittedEdit();       // hot reload + refresh panels
     void importSamples (NodeRef target, const juce::StringArray& files);
+    void chooseBackground();
     dm::Group* resolveGroup (NodeRef ref);
     void refreshProblems();
     void updateToolbar();
@@ -46,6 +48,8 @@ private:
     juce::TextButton undoButton { "Undo" };
     juce::TextButton redoButton { "Redo" };
     juce::TextButton reloadButton { "Reload" };
+    juce::TextButton designButton { "Design" };          // toggles the GUI-designer overlay
+    juce::TextButton backgroundButton { "Background..." };
     juce::TextButton audioButton { "Audio..." };
     juce::Label pathLabel;
 
@@ -62,6 +66,7 @@ private:
         }
     };
     EditorHolder editorHolder;
+    DesignerOverlay designer;
 
     juce::TextEditor problems;
 

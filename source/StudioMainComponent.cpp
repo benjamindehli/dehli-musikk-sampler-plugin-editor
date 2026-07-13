@@ -74,6 +74,18 @@ StudioMainComponent::StudioMainComponent()
     };
     addAndMakeVisible (audioButton);
 
+    designButton.setClickingTogglesState (true);
+    designButton.setColour (juce::TextButton::buttonOnColourId, juce::Colour (0xff3a5a7a));
+    designButton.onClick = [this]
+    {
+        designer.setVisible (designButton.getToggleState() && project != nullptr);
+        designer.toFront (false);
+    };
+    addAndMakeVisible (designButton);
+
+    backgroundButton.onClick = [this] { chooseBackground(); };
+    addAndMakeVisible (backgroundButton);
+
     pathLabel.setText ("No plugin open", juce::dontSendNotification);
     pathLabel.setColour (juce::Label::textColourId, juce::Colour (0xffb0b1b2));
     addAndMakeVisible (pathLabel);
@@ -143,6 +155,60 @@ StudioMainComponent::StudioMainComponent()
 
     editorHolder.onChildResized = [this] { layoutEditor(); };
     addAndMakeVisible (editorHolder);
+
+    // GUI designer overlay: tracks the hosted editor's face on its own timer and
+    // turns drags into rect commits through the UI-only hot path (no re-decode).
+    designer.getMode = [this] () -> dm::Mode*
+    {
+        if (project == nullptr) return nullptr;
+        auto& lib = project->getModel();
+        const int i = project->getProcessor().getActiveModeIndex();
+        return i >= 0 && i < lib.modes.size() ? &lib.modes.getReference (i) : nullptr;
+    };
+    designer.getModeIndex = [this]
+    {
+        return project != nullptr ? project->getProcessor().getActiveModeIndex() : 0;
+    };
+    designer.findFace = [this] () -> juce::Component*
+    {
+        if (pluginEditor == nullptr) return nullptr;
+        std::function<juce::Component* (juce::Component&)> find =
+            [&find] (juce::Component& c) -> juce::Component*
+        {
+            if (dynamic_cast<dm::ManifestUiComponent*> (&c) != nullptr)
+                return &c;
+            for (auto* child : c.getChildren())
+                if (auto* hit = find (*child))
+                    return hit;
+            return nullptr;
+        };
+        return find (*pluginEditor);
+    };
+    designer.onSelect = [this] (NodeRef ref) { inspector.show (ref); };
+    designer.onCommitRect = [this] (NodeRef ref, dm::Rect r)
+    {
+        if (project == nullptr) return;
+        auto& lib = project->getModel();
+        if (ref.mode < 0 || ref.mode >= lib.modes.size() || lib.modes.getReference (ref.mode).ui.tabs.isEmpty())
+            return;
+        auto& tab = lib.modes.getReference (ref.mode).ui.tabs.getReference (0);
+
+        project->beginEdit();
+        if (ref.kind == NodeRef::Kind::control && ref.a < tab.controls.size())
+            tab.controls.getReference (ref.a).rect = r;
+        else if (ref.kind == NodeRef::Kind::button && ref.a < tab.buttons.size())
+            tab.buttons.getReference (ref.a).rect = r;
+        else if (ref.kind == NodeRef::Kind::menu && ref.a < tab.menus.size())
+            tab.menus.getReference (ref.a).rect = r;
+        else if (ref.kind == NodeRef::Kind::image && ref.a < tab.images.size())
+            tab.images.getReference (ref.a).rect = r;
+        project->commitUiEdit (ref.mode);   // hot path: face rebuild only
+        inspector.refresh();
+        refreshProblems();
+        updateToolbar();
+    };
+    designer.setVisible (false);
+    editorHolder.addChildComponent (designer);
 
     problems.setMultiLine (true);
     problems.setReadOnly (true);
@@ -216,6 +282,7 @@ void StudioMainComponent::attachProcessor()
         editorHolder.addAndMakeVisible (*pluginEditor);
         pluginEditor->addComponentListener (&editorHolder);
     }
+    designer.toFront (false);   // stays above a freshly attached editor
     layoutEditor();
 }
 
@@ -273,6 +340,55 @@ void StudioMainComponent::openRepo (const juce::File& repoDir)
     pathLabel.setText (project->getRepoRoot().getFullPathName(), juce::dontSendNotification);
     refreshProblems();
     updateToolbar();
+}
+
+void StudioMainComponent::chooseBackground()
+{
+    if (project == nullptr)
+        return;
+    chooser = std::make_unique<juce::FileChooser> ("Choose a background image",
+                                                   juce::File(), "*.png;*.jpg;*.jpeg");
+    chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
+                          [this] (const juce::FileChooser& fc)
+    {
+        const auto src = fc.getResult();
+        if (! src.existsAsFile() || project == nullptr)
+            return;
+
+        // Copy into assets/images, uniquified against ids the model references.
+        auto imagesDir = project->getRepoRoot().getChildFile ("assets").getChildFile ("images");
+        imagesDir.createDirectory();
+        auto idInUse = [this] (const juce::String& stem)
+        {
+            const auto id = "img:" + stem;
+            for (const auto& m : project->getModel().modes)
+            {
+                if (m.ui.background == id) return true;
+                for (const auto& tab : m.ui.tabs)
+                    for (const auto& im : tab.images)
+                        if (im.image == id) return true;
+            }
+            return false;
+        };
+        auto stem = src.getFileNameWithoutExtension();
+        for (int n = 2; idInUse (stem); ++n)
+            stem = src.getFileNameWithoutExtension() + "_" + juce::String (n);
+        const auto dest = imagesDir.getChildFile (stem + "." + src.getFileExtension().trimCharactersAtStart ("."));
+        dest.deleteFile();
+        if (! src.copyFileTo (dest))
+        {
+            problems.setText ("Could not copy the image into assets/images.");
+            return;
+        }
+
+        const int mi = project->getProcessor().getActiveModeIndex();
+        auto& lib = project->getModel();
+        if (mi < 0 || mi >= lib.modes.size())
+            return;
+        project->beginEdit();
+        lib.modes.getReference (mi).ui.background = "img:" + stem;
+        applyCommittedEdit();   // full reload: a NEW image asset must enter the cache
+    });
 }
 
 dm::Group* StudioMainComponent::resolveGroup (NodeRef ref)
@@ -385,6 +501,13 @@ void StudioMainComponent::refreshProblems()
 void StudioMainComponent::updateToolbar()
 {
     const bool open = project != nullptr;
+    designButton.setEnabled (open);
+    backgroundButton.setEnabled (open);
+    if (! open)
+    {
+        designButton.setToggleState (false, juce::dontSendNotification);
+        designer.setVisible (false);
+    }
     saveButton.setEnabled (open && project->isDirty());
     undoButton.setEnabled (open && project->canUndo());
     redoButton.setEnabled (open && project->canRedo());
@@ -413,9 +536,11 @@ void StudioMainComponent::resized()
 {
     auto r = getLocalBounds();
     auto top = r.removeFromTop (kTopStrip).reduced (6, 5);
-    for (auto* b : { &openButton, &saveButton, &undoButton, &redoButton, &reloadButton, &audioButton })
+    for (auto* b : { &openButton, &saveButton, &undoButton, &redoButton, &reloadButton,
+                     &designButton, &backgroundButton, &audioButton })
     {
-        b->setBounds (top.removeFromLeft (b == &openButton ? 80 : 66));
+        b->setBounds (top.removeFromLeft (b == &openButton ? 80
+                                          : b == &backgroundButton ? 110 : 66));
         top.removeFromLeft (6);
     }
     top.removeFromLeft (8);
