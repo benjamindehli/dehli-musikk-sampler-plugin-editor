@@ -1,11 +1,13 @@
 #pragma once
 
-// The Studio's main view (milestone 1): open a plugin repo, host the REAL plugin
-// (editor + audio + MIDI in), and show the manifest lint in a problems panel.
-// Editing layers (inspector, GUI designer, bindings, sample import, build/export)
-// land in later milestones on top of this shell.
+// The Studio's main view. Milestone 2: model tree (left) + property inspector
+// (right) around the hosted plugin preview (centre), with Save / Undo / Redo,
+// dirty tracking, and hot reload — every committed edit rebuilds the hosted
+// processor from the in-memory model with its state carried over.
 
 #include "PluginProject.h"
+#include "ModelTree.h"
+#include "Inspector.h"
 #include <juce_audio_utils/juce_audio_utils.h>
 
 namespace dmse_studio
@@ -19,20 +21,36 @@ public:
 
     void paint (juce::Graphics&) override;
     void resized() override;
+    bool keyPressed (const juce::KeyPress&) override;
+
+    /** Unsaved-changes guard for the window close button. */
+    bool isDirty() const { return project != nullptr && project->isDirty(); }
 
 private:
     void chooseAndOpen();
     void openRepo (const juce::File& repoDir);
     void closeProject();
     void layoutEditor();
+    void attachProcessor();          // player + editor onto the current processor
+    void detachProcessor();
+    void applyCommittedEdit();       // hot reload + refresh panels
+    void refreshProblems();
+    void updateToolbar();
+    void confirmDiscardThen (std::function<void()> proceed);
 
     // Top strip
-    juce::TextButton openButton { "Open plugin repo..." };
+    juce::TextButton openButton { "Open..." };
+    juce::TextButton saveButton { "Save" };
+    juce::TextButton undoButton { "Undo" };
+    juce::TextButton redoButton { "Redo" };
     juce::TextButton reloadButton { "Reload" };
-    juce::TextButton audioButton { "Audio settings..." };
+    juce::TextButton audioButton { "Audio..." };
     juce::Label pathLabel;
 
-    // Centre: the hosted plugin editor (the real thing)
+    // Panels
+    ModelTree modelTree;
+    Inspector inspector;
+
     struct EditorHolder : juce::Component, juce::ComponentListener
     {
         std::function<void()> onChildResized;
@@ -43,7 +61,6 @@ private:
     };
     EditorHolder editorHolder;
 
-    // Bottom: manifest lint / problems panel
     juce::TextEditor problems;
 
     // Hosting

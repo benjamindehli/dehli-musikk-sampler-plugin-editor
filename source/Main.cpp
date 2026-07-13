@@ -38,6 +38,21 @@ private:
 
         void closeButtonPressed() override
         {
+            // Unsaved-changes guard before quitting.
+            if (auto* c = dynamic_cast<StudioMainComponent*> (getContentComponent());
+                c != nullptr && c->isDirty())
+            {
+                juce::AlertWindow::showOkCancelBox (
+                    juce::MessageBoxIconType::WarningIcon, "Unsaved changes",
+                    "The project has unsaved changes. Quit and discard them?",
+                    "Quit", "Cancel", this,
+                    juce::ModalCallbackFunction::create ([] (int result)
+                    {
+                        if (result == 1)
+                            juce::JUCEApplication::getInstance()->quit();
+                    }));
+                return;
+            }
             juce::JUCEApplication::getInstance()->systemRequestedQuit();
         }
 
