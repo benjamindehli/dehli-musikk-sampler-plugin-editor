@@ -7,6 +7,7 @@
 // NodeRef on EVERY access — the model's arrays are replaced by commits and undo.
 
 #include "ModelTree.h"
+#include "BindingVocab.h"
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <functional>
 
@@ -276,6 +277,144 @@ public:
                 }
                 break;
             }
+            case NodeRef::Kind::controlBinding:
+            {
+                title.setText ("Binding", juce::dontSendNotification);
+                if (auto* b = binding (ref))
+                {
+                    // Target kind first — it decides the other two dropdowns.
+                    props.add (choice ("Target kind", vocab::targetNames(),
+                        [this, ref] { return (int) vocab::targetOf (*binding (ref)); },
+                        [this, ref] (int i)
+                        {
+                            auto& bd = *binding (ref);
+                            const auto t = (vocab::Target) i;
+                            // Reset the addressing fields for the new kind; the target
+                            // and parameter dropdowns then take over.
+                            bd.targetId.clear();
+                            bd.identifier.clear();
+                            bd.effectIndex.reset();
+                            bd.groupIndex.reset();
+                            bd.position.reset();
+                            switch (t)
+                            {
+                                case vocab::Target::instrument: bd.type = "amp";       bd.level = "instrument"; break;
+                                case vocab::Target::group:      bd.type = "amp";       bd.level = "group";      break;
+                                case vocab::Target::tag:        bd.type = "amp";       bd.level = "tag";        break;
+                                case vocab::Target::effect:     bd.type = "effect";    bd.level = "instrument"; break;
+                                case vocab::Target::modulator:  bd.type = "modulator"; bd.level = "instrument"; break;
+                            }
+                            bd.parameter = vocab::paramsFor (t)[0];
+                        }));
+
+                    const auto kind = vocab::targetOf (*b);
+
+                    // Target instance (not needed for instrument-level bindings).
+                    if (kind == vocab::Target::group)
+                    {
+                        juce::StringArray names;
+                        if (auto* m = mode (ref))
+                            for (int i = 0; i < m->groups.size(); ++i)
+                            {
+                                const auto& g = m->groups.getReference (i);
+                                names.add (juce::String (i) + ": "
+                                           + (g.tags.isEmpty() ? g.uid : g.tags.joinIntoString (",")));
+                            }
+                        props.add (choice ("Group", names,
+                            [this, ref] { return binding (ref)->groupIndex.value_or (0); },
+                            [this, ref] (int i)
+                            {
+                                auto& bd = *binding (ref);
+                                bd.groupIndex = i;
+                                if (auto* m = mode (ref); m != nullptr && i < m->groups.size())
+                                    bd.targetId = m->groups.getReference (i).uid;
+                            }));
+                    }
+                    else if (kind == vocab::Target::effect)
+                    {
+                        juce::StringArray ids;
+                        if (auto* m = mode (ref))
+                            for (const auto& e : m->effects)
+                                ids.add (e.id.isNotEmpty() ? e.id : e.type);
+                        props.add (choice ("Effect", ids,
+                            [this, ref] { return binding (ref)->effectIndex.value_or (0); },
+                            [this, ref] (int i)
+                            {
+                                auto& bd = *binding (ref);
+                                bd.effectIndex = i;
+                                if (auto* m = mode (ref); m != nullptr && i < m->effects.size())
+                                    bd.targetId = m->effects.getReference (i).id;
+                            }));
+                    }
+                    else if (kind == vocab::Target::tag)
+                    {
+                        juce::StringArray tags;
+                        if (auto* m = mode (ref))
+                        {
+                            for (const auto& t : m->tags)
+                                tags.addIfNotAlreadyThere (t.name);
+                            for (const auto& g : m->groups)
+                                for (const auto& t : g.tags)
+                                    tags.addIfNotAlreadyThere (t);
+                        }
+                        props.add (choice ("Tag", tags,
+                            [this, ref, tags] { return juce::jmax (0, tags.indexOf (binding (ref)->identifier)); },
+                            [this, ref, tags] (int i) { binding (ref)->identifier = tags[i]; }));
+                    }
+                    else if (kind == vocab::Target::modulator)
+                    {
+                        juce::StringArray ids;
+                        if (auto* m = mode (ref))
+                            for (int i = 0; i < m->modulators.size(); ++i)
+                            {
+                                const auto& lfo = m->modulators.getReference (i);
+                                ids.add (lfo.id.isNotEmpty() ? lfo.id : "mod " + juce::String (i));
+                            }
+                        props.add (choice ("Modulator", ids,
+                            [this, ref] { return binding (ref)->position.value_or (0); },
+                            [this, ref] (int i)
+                            {
+                                auto& bd = *binding (ref);
+                                bd.position = i;
+                                if (auto* m = mode (ref); m != nullptr && i < m->modulators.size())
+                                    bd.targetId = m->modulators.getReference (i).id;
+                            }));
+                    }
+
+                    // Parameter, from the kind's vocabulary.
+                    {
+                        const auto params = vocab::paramsFor (kind);
+                        props.add (choice ("Parameter", params,
+                            [this, ref, params] { return juce::jmax (0, params.indexOf (binding (ref)->parameter)); },
+                            [this, ref, params] (int i) { binding (ref)->parameter = params[i]; }));
+                    }
+
+                    props.add (optNumber ("Output min (control at min)",
+                        [this, ref] { return binding (ref)->translationOutputMin; },
+                        [this, ref] (std::optional<double> v)
+                        {
+                            auto& bd = *binding (ref);
+                            bd.translationOutputMin = v;
+                            bd.translation = (bd.translationOutputMin || bd.translationOutputMax)
+                                                 ? "linear" : juce::String();
+                        }));
+                    props.add (optNumber ("Output max (control at max)",
+                        [this, ref] { return binding (ref)->translationOutputMax; },
+                        [this, ref] (std::optional<double> v)
+                        {
+                            auto& bd = *binding (ref);
+                            bd.translationOutputMax = v;
+                            bd.translation = (bd.translationOutputMin || bd.translationOutputMax)
+                                                 ? "linear" : juce::String();
+                        }));
+                    props.add (boolean ("Reversed", [this, ref] { return binding (ref)->translationReversed; },
+                                        [this, ref] (bool v) { binding (ref)->translationReversed = v; }));
+                    props.add (optNumber ("Factor (empty = 1)",
+                        [this, ref] { return binding (ref)->factor; },
+                        [this, ref] (std::optional<double> v) { binding (ref)->factor = v; }));
+                }
+                break;
+            }
             case NodeRef::Kind::sequences:
                 title.setText ("Sequences", juce::dontSendNotification);
                 props.add (readOnly ("Note", "Sequence editing arrives in a later milestone."));
@@ -351,6 +490,18 @@ private:
                 return &m->ui.tabs.getReference (0).menus.getReference (r.a);
         return nullptr;
     }
+    dm::Binding* binding (NodeRef r)
+    {
+        if (auto* m = mode (r))
+            if (! m->ui.tabs.isEmpty() && r.a >= 0 && r.a < m->ui.tabs.getReference (0).controls.size())
+            {
+                auto& c = m->ui.tabs.getReference (0).controls.getReference (r.a);
+                if (r.b >= 0 && r.b < c.bindings.size())
+                    return &c.bindings.getReference (r.b);
+            }
+        return nullptr;
+    }
+
     dm::UiImage* image (NodeRef r)
     {
         if (auto* m = mode (r))

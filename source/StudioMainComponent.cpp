@@ -1,5 +1,6 @@
 #include "StudioMainComponent.h"
 #include "SampleImport.h"
+#include "BindingVocab.h"
 
 namespace dmse_studio
 {
@@ -135,7 +136,42 @@ StudioMainComponent::StudioMainComponent()
                 && ref.b >= 0 && ref.b < m.groups.getReference (ref.a).effects.size())
                 m.groups.getReference (ref.a).effects.remove (ref.b);
         }
+        else if (ref.kind == NodeRef::Kind::controlBinding)
+        {
+            if (! m.ui.tabs.isEmpty() && ref.a >= 0 && ref.a < m.ui.tabs.getReference (0).controls.size()
+                && ref.b >= 0 && ref.b < m.ui.tabs.getReference (0).controls.getReference (ref.a).bindings.size())
+                m.ui.tabs.getReference (0).controls.getReference (ref.a).bindings.remove (ref.b);
+        }
         applyCommittedEdit();
+    };
+    modelTree.onAddEffect = [this] (NodeRef parent, const juce::String& type)
+    {
+        addEffect (parent, type);
+    };
+    modelTree.onAddBinding = [this] (NodeRef ctl)
+    {
+        if (project == nullptr) return;
+        auto& lib = project->getModel();
+        if (ctl.mode < 0 || ctl.mode >= lib.modes.size()
+            || lib.modes.getReference (ctl.mode).ui.tabs.isEmpty())
+            return;
+        auto& tab = lib.modes.getReference (ctl.mode).ui.tabs.getReference (0);
+        if (ctl.a < 0 || ctl.a >= tab.controls.size())
+            return;
+
+        project->beginEdit();
+        dm::Binding b;
+        b.type = "amp";
+        b.level = "instrument";
+        b.parameter = "AMP_VOLUME";
+        b.translation = "linear";
+        b.translationOutputMin = 0.0;
+        b.translationOutputMax = 1.0;
+        auto& c = tab.controls.getReference (ctl.a);
+        c.bindings.add (std::move (b));
+        const NodeRef newRef { NodeRef::Kind::controlBinding, ctl.mode, ctl.a, c.bindings.size() - 1 };
+        applyCommittedEdit();
+        inspector.show (newRef);   // jump straight into editing the fresh binding
     };
     modelTree.onSpreadRanges = [this] (NodeRef ref)
     {
@@ -340,6 +376,81 @@ void StudioMainComponent::openRepo (const juce::File& repoDir)
     pathLabel.setText (project->getRepoRoot().getFullPathName(), juce::dontSendNotification);
     refreshProblems();
     updateToolbar();
+}
+
+void StudioMainComponent::addEffect (NodeRef parent, const juce::String& type)
+{
+    if (project == nullptr)
+        return;
+
+    // Convolution needs an impulse response: pick + transcode it first, then create.
+    if (type == "convolution")
+    {
+        chooser = std::make_unique<juce::FileChooser> ("Choose an impulse response",
+                                                       juce::File(), "*.wav;*.aif;*.aiff;*.flac");
+        chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
+                              [this, parent, type] (const juce::FileChooser& fc)
+        {
+            const auto src = fc.getResult();
+            if (! src.existsAsFile() || project == nullptr)
+                return;
+            auto irDir = project->getRepoRoot().getChildFile ("assets").getChildFile ("ir");
+            auto irInUse = [this] (const juce::String& stem)
+            {
+                const auto id = "ir:" + stem;
+                for (const auto& m : project->getModel().modes)
+                {
+                    for (const auto& e : m.effects)
+                        if (e.ir == id) return true;
+                    for (const auto& g : m.groups)
+                        for (const auto& e : g.effects)
+                            if (e.ir == id) return true;
+                }
+                return false;
+            };
+            juce::String error;
+            const auto imported = transcodeToFlac (src, irDir, irInUse, error);
+            if (! imported)
+            {
+                problems.setText ("IR import failed: " + error);
+                return;
+            }
+            addEffectNow (parent, type, "ir:" + imported->stem);
+        });
+        return;
+    }
+    addEffectNow (parent, type, {});
+}
+
+void StudioMainComponent::addEffectNow (NodeRef parent, const juce::String& type, const juce::String& irId)
+{
+    auto& lib = project->getModel();
+    if (parent.mode < 0 || parent.mode >= lib.modes.size())
+        return;
+    auto& m = lib.modes.getReference (parent.mode);
+
+    // Unique readable id across the mode's instrument + group chains (converter style).
+    auto idTaken = [&m] (const juce::String& id)
+    {
+        for (const auto& e : m.effects)
+            if (e.id == id) return true;
+        for (const auto& g : m.groups)
+            for (const auto& e : g.effects)
+                if (e.id == id) return true;
+        return false;
+    };
+    auto id = "fx_" + type;
+    for (int n = 2; idTaken (id); ++n)
+        id = "fx_" + type + "_" + juce::String (n);
+
+    project->beginEdit();
+    auto e = vocab::makeEffect (type, id);
+    e.ir = irId;
+    if (parent.kind == NodeRef::Kind::group && parent.a >= 0 && parent.a < m.groups.size())
+        m.groups.getReference (parent.a).effects.add (std::move (e));
+    else
+        m.effects.add (std::move (e));
+    applyCommittedEdit();
 }
 
 void StudioMainComponent::chooseBackground()

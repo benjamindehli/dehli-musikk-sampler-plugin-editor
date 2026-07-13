@@ -37,6 +37,8 @@ private:
     void applyCommittedEdit();       // hot reload + refresh panels
     void importSamples (NodeRef target, const juce::StringArray& files);
     void chooseBackground();
+    void addEffect (NodeRef parent, const juce::String& type);
+    void addEffectNow (NodeRef parent, const juce::String& type, const juce::String& irId);
     dm::Group* resolveGroup (NodeRef ref);
     void refreshProblems();
     void updateToolbar();

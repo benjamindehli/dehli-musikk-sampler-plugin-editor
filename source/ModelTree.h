@@ -5,6 +5,7 @@
 // model's arrays, so pointers into it don't survive. The tree is rebuilt after
 // structural changes; selection is preserved by re-resolving the NodeRef.
 
+#include "BindingVocab.h"
 #include <model/Manifest.h>
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <functional>
@@ -24,6 +25,7 @@ struct NodeRef
         sequences,     // summary leaf (count)
         uiRoot,        // mode's ui (width/height/cropTop/background)
         control,       // a = control (tab 0)
+        controlBinding,// a = control, b = binding
         button,        // a = button
         menu,          // a = menu
         image,         // a = image
@@ -46,8 +48,10 @@ public:
     // Structural actions (milestone 3) — the Studio implements these.
     std::function<void (NodeRef, const juce::StringArray&)> onImportFiles;   // group (or child) + audio files
     std::function<void (int modeIndex)> onAddGroup;
-    std::function<void (NodeRef)> onRemoveNode;      // sample / group / effect
+    std::function<void (NodeRef)> onRemoveNode;      // sample / group / effect / binding
     std::function<void (NodeRef)> onSpreadRanges;    // group: stretch zones + pitch-track
+    std::function<void (NodeRef, const juce::String& type)> onAddEffect;   // mode or group + type
+    std::function<void (NodeRef)> onAddBinding;      // control → new default binding
 
     ModelTree()
     {
@@ -139,8 +143,15 @@ public:
             {
                 const auto& tab = m.ui.tabs.getReference (0);
                 for (int i = 0; i < tab.controls.size(); ++i)
-                    uiItem->addSubItem (new Item (this, { NodeRef::Kind::control, mi, i },
-                                                  "knob: " + tab.controls.getReference (i).label));
+                {
+                    const auto& c = tab.controls.getReference (i);
+                    auto* ctlItem = new Item (this, { NodeRef::Kind::control, mi, i },
+                                              "knob: " + c.label);
+                    uiItem->addSubItem (ctlItem);
+                    for (int bi = 0; bi < c.bindings.size(); ++bi)
+                        ctlItem->addSubItem (new Item (this, { NodeRef::Kind::controlBinding, mi, i, bi },
+                                                       vocab::describeBinding (c.bindings.getReference (bi))));
+                }
                 for (int i = 0; i < tab.buttons.size(); ++i)
                     uiItem->addSubItem (new Item (this, { NodeRef::Kind::button, mi, i },
                                                   "button: " + buttonName (tab.buttons.getReference (i), i)));
@@ -245,12 +256,22 @@ private:
             {
                 m.addItem (1, "Import samples...");
                 m.addItem (4, "Auto-spread ranges (pitch-track the gaps)");
+                juce::PopupMenu fx;
+                const auto types = vocab::effectTypes();
+                for (int i = 0; i < types.size(); ++i)
+                    fx.addItem (100 + i, types[i]);
+                m.addSubMenu ("Add effect", fx);
                 m.addSeparator();
                 m.addItem (3, "Remove group");
             }
             else if (k == NodeRef::Kind::mode)
             {
                 m.addItem (2, "Add group");
+                juce::PopupMenu fx;
+                const auto types = vocab::effectTypes();
+                for (int i = 0; i < types.size(); ++i)
+                    fx.addItem (100 + i, types[i]);
+                m.addSubMenu ("Add effect", fx);
             }
             else if (k == NodeRef::Kind::sample)
             {
@@ -259,6 +280,14 @@ private:
             else if (k == NodeRef::Kind::effect || k == NodeRef::Kind::groupEffect)
             {
                 m.addItem (3, "Remove effect");
+            }
+            else if (k == NodeRef::Kind::control)
+            {
+                m.addItem (5, "Add binding");
+            }
+            else if (k == NodeRef::Kind::controlBinding)
+            {
+                m.addItem (3, "Remove binding");
             }
             else
                 return;
@@ -287,6 +316,9 @@ private:
                 else if (result == 2 && o->onAddGroup)      o->onAddGroup (r.mode);
                 else if (result == 3 && o->onRemoveNode)    o->onRemoveNode (r);
                 else if (result == 4 && o->onSpreadRanges)  o->onSpreadRanges (r);
+                else if (result == 5 && o->onAddBinding)    o->onAddBinding (r);
+                else if (result >= 100 && o->onAddEffect)
+                    o->onAddEffect (r, vocab::effectTypes()[result - 100]);
             });
         }
 
