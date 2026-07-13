@@ -9,6 +9,7 @@
 #include "ModelTree.h"
 #include "Inspector.h"
 #include "DesignerOverlay.h"
+#include "BuildRunner.h"
 #include <juce_audio_utils/juce_audio_utils.h>
 
 namespace dmse_studio
@@ -38,6 +39,14 @@ private:
     void importSamples (NodeRef target, const juce::StringArray& files);
     void chooseBackground();
     void addEffect (NodeRef parent, const juce::String& type);
+    void newPluginWizard();
+    void addWidget (NodeRef uiRoot, const juce::String& kind);
+    juce::String importImageAsset (const juce::File& src, juce::String& error);   // → stem ("" on failure)
+    void buildPlugin();
+    void runStandalone();
+    juce::String parsedTarget() const;    // dmse_add_plugin(<Target> from the repo's CMakeLists
+    juce::String parsedProduct() const;   // PRODUCT_NAME "<name>"
+    juce::File standaloneArtefact() const;
     void addEffectNow (NodeRef parent, const juce::String& type, const juce::String& irId);
     dm::Group* resolveGroup (NodeRef ref);
     void refreshProblems();
@@ -45,6 +54,7 @@ private:
     void confirmDiscardThen (std::function<void()> proceed);
 
     // Top strip
+    juce::TextButton newButton { "New..." };
     juce::TextButton openButton { "Open..." };
     juce::TextButton saveButton { "Save" };
     juce::TextButton undoButton { "Undo" };
@@ -52,6 +62,8 @@ private:
     juce::TextButton reloadButton { "Reload" };
     juce::TextButton designButton { "Design" };          // toggles the GUI-designer overlay
     juce::TextButton backgroundButton { "Background..." };
+    juce::TextButton buildButton { "Build" };
+    juce::TextButton runButton { "Run" };
     juce::TextButton audioButton { "Audio..." };
     juce::Label pathLabel;
 
@@ -80,6 +92,7 @@ private:
     std::unique_ptr<juce::FileChooser> chooser;
 
     juce::File lastDir;
+    BuildRunner buildRunner;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (StudioMainComponent)
 };

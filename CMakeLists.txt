@@ -33,3 +33,12 @@ target_link_libraries(DmseStudio PRIVATE
     juce::juce_recommended_config_flags
     juce::juce_recommended_warning_flags
 )
+
+# Headless probe/test runner (used by development; not shipped).
+juce_add_console_app(DmseStudioProbe PRODUCT_NAME "dmse-studio-probe")
+target_sources(DmseStudioProbe PRIVATE tests/StudioProbe.cpp)
+target_compile_definitions(DmseStudioProbe PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0)
+target_link_libraries(DmseStudioProbe PRIVATE
+    dehli_musikk_sampler_engine
+    juce::juce_audio_utils
+    juce::juce_recommended_config_flags)

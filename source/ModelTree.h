@@ -52,6 +52,7 @@ public:
     std::function<void (NodeRef)> onSpreadRanges;    // group: stretch zones + pitch-track
     std::function<void (NodeRef, const juce::String& type)> onAddEffect;   // mode or group + type
     std::function<void (NodeRef)> onAddBinding;      // control → new default binding
+    std::function<void (NodeRef, const juce::String& kind)> onAddWidget;    // uiRoot + knob/button/image
 
     ModelTree()
     {
@@ -289,6 +290,17 @@ private:
             {
                 m.addItem (3, "Remove binding");
             }
+            else if (k == NodeRef::Kind::uiRoot)
+            {
+                m.addItem (10, "Add knob (filmstrip image)...");
+                m.addItem (11, "Add button (state images)...");
+                m.addItem (12, "Add image...");
+            }
+            else if (k == NodeRef::Kind::button || k == NodeRef::Kind::menu
+                     || k == NodeRef::Kind::image)
+            {
+                m.addItem (3, "Remove");
+            }
             else
                 return;
 
@@ -317,6 +329,9 @@ private:
                 else if (result == 3 && o->onRemoveNode)    o->onRemoveNode (r);
                 else if (result == 4 && o->onSpreadRanges)  o->onSpreadRanges (r);
                 else if (result == 5 && o->onAddBinding)    o->onAddBinding (r);
+                else if (result == 10 && o->onAddWidget) o->onAddWidget (r, "knob");
+                else if (result == 11 && o->onAddWidget) o->onAddWidget (r, "button");
+                else if (result == 12 && o->onAddWidget) o->onAddWidget (r, "image");
                 else if (result >= 100 && o->onAddEffect)
                     o->onAddEffect (r, vocab::effectTypes()[result - 100]);
             });
