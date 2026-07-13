@@ -1,0 +1,10 @@
+.DS_Store
+CLAUDE.md
+/.claude
+build/
+cmake-build-*/
+.vscode/
+.idea/
+.cache/
+*.swp
+*~
