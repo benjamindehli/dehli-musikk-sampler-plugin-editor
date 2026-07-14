@@ -19,6 +19,7 @@ endif()
 juce_add_gui_app(DmseStudio
     ${_studio_icon_args}
     PRODUCT_NAME "DMSE Studio"
+    VERSION      "1.0.0"
     COMPANY_NAME "DehliMusikk"
     BUNDLE_ID    "com.dehlimusikk.dmsestudio"
 )
