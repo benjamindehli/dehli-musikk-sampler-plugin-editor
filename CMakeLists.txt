@@ -8,7 +8,16 @@
 #
 # Built as part of the superproject (which provides JUCE + the engine target).
 
+# App icon by the house convention: drop packaging/icon.png (square, 1024x1024
+# recommended) and JUCE bakes it into the bundle (macOS .icns / Windows .ico).
+set(_studio_icon_args)
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/packaging/icon.png")
+    set(_studio_icon_args ICON_BIG "${CMAKE_CURRENT_SOURCE_DIR}/packaging/icon.png")
+    message(STATUS "DmseStudio: app icon from packaging/icon.png")
+endif()
+
 juce_add_gui_app(DmseStudio
+    ${_studio_icon_args}
     PRODUCT_NAME "DMSE Studio"
     COMPANY_NAME "DehliMusikk"
     BUNDLE_ID    "com.dehlimusikk.dmsestudio"
