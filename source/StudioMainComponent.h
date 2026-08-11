@@ -5,96 +5,97 @@
 // dirty tracking, and hot reload — every committed edit rebuilds the hosted
 // processor from the in-memory model with its state carried over.
 
-#include "PluginProject.h"
-#include "ModelTree.h"
-#include "Inspector.h"
-#include "DesignerOverlay.h"
 #include "BuildRunner.h"
+#include "DesignerOverlay.h"
+#include "Inspector.h"
+#include "ModelTree.h"
+#include "PluginProject.h"
 #include <juce_audio_utils/juce_audio_utils.h>
 
-namespace dmse_studio
-{
+namespace dmse_studio {
 
-class StudioMainComponent : public juce::Component
-{
+class StudioMainComponent : public juce::Component {
 public:
-    StudioMainComponent();
-    ~StudioMainComponent() override;
+  StudioMainComponent();
+  ~StudioMainComponent() override;
 
-    void paint (juce::Graphics&) override;
-    void resized() override;
-    bool keyPressed (const juce::KeyPress&) override;
+  void paint(juce::Graphics &) override;
+  void resized() override;
+  bool keyPressed(const juce::KeyPress &) override;
 
-    /** Unsaved-changes guard for the window close button. */
-    bool isDirty() const { return project != nullptr && project->isDirty(); }
+  /** Unsaved-changes guard for the window close button. */
+  bool isDirty() const { return project != nullptr && project->isDirty(); }
 
 private:
-    void chooseAndOpen();
-    void openRepo (const juce::File& repoDir);
-    void closeProject();
-    void layoutEditor();
-    void attachProcessor();          // player + editor onto the current processor
-    void detachProcessor();
-    void applyCommittedEdit();       // hot reload + refresh panels
-    void importSamples (NodeRef target, const juce::StringArray& files);
-    void chooseBackground();
-    void addEffect (NodeRef parent, const juce::String& type);
-    void newPluginWizard();
-    void addWidget (NodeRef uiRoot, const juce::String& kind);
-    juce::String importImageAsset (const juce::File& src, juce::String& error);   // → stem ("" on failure)
-    void buildPlugin();
-    void runStandalone();
-    juce::String parsedTarget() const;    // dmse_add_plugin(<Target> from the repo's CMakeLists
-    juce::String parsedProduct() const;   // PRODUCT_NAME "<name>"
-    juce::File standaloneArtefact() const;
-    void addEffectNow (NodeRef parent, const juce::String& type, const juce::String& irId);
-    dm::Group* resolveGroup (NodeRef ref);
-    void refreshProblems();
-    void updateToolbar();
-    void confirmDiscardThen (std::function<void()> proceed);
+  void chooseAndOpen();
+  void openRepo(const juce::File &repoDir);
+  void closeProject();
+  void layoutEditor();
+  void attachProcessor(); // player + editor onto the current processor
+  void detachProcessor();
+  void applyCommittedEdit(); // hot reload + refresh panels
+  void importSamples(NodeRef target, const juce::StringArray &files);
+  void chooseBackground();
+  void addEffect(NodeRef parent, const juce::String &type);
+  void newPluginWizard();
+  void addWidget(NodeRef uiRoot, const juce::String &kind);
+  juce::String importImageAsset(const juce::File &src,
+                                juce::String &error); // → stem ("" on failure)
+  void buildPlugin();
+  void runStandalone();
+  juce::String
+  parsedTarget() const; // dmse_add_plugin(<Target> from the repo's CMakeLists
+  juce::String parsedProduct() const; // PRODUCT_NAME "<name>"
+  juce::File standaloneArtefact() const;
+  void addEffectNow(NodeRef parent, const juce::String &type,
+                    const juce::String &irId);
+  dm::Group *resolveGroup(NodeRef ref);
+  void refreshProblems();
+  void updateToolbar();
+  void confirmDiscardThen(std::function<void()> proceed);
 
-    // Top strip
-    juce::TextButton newButton { "New..." };
-    juce::TextButton openButton { "Open..." };
-    juce::TextButton saveButton { "Save" };
-    juce::TextButton undoButton { "Undo" };
-    juce::TextButton redoButton { "Redo" };
-    juce::TextButton reloadButton { "Reload" };
-    juce::TextButton designButton { "Design" };          // toggles the GUI-designer overlay
-    juce::TextButton backgroundButton { "Background..." };
-    juce::TextButton buildButton { "Build" };
-    juce::TextButton runButton { "Run" };
-    juce::TextButton audioButton { "Audio..." };
-    juce::Label pathLabel;
+  // Top strip
+  juce::TextButton newButton{"New..."};
+  juce::TextButton openButton{"Open..."};
+  juce::TextButton saveButton{"Save"};
+  juce::TextButton undoButton{"Undo"};
+  juce::TextButton redoButton{"Redo"};
+  juce::TextButton reloadButton{"Reload"};
+  juce::TextButton designButton{"Design"}; // toggles the GUI-designer overlay
+  juce::TextButton backgroundButton{"Background..."};
+  juce::TextButton buildButton{"Build"};
+  juce::TextButton runButton{"Run"};
+  juce::TextButton audioButton{"Audio..."};
+  juce::Label pathLabel;
 
-    // Panels
-    ModelTree modelTree;
-    Inspector inspector;
+  // Panels
+  ModelTree modelTree;
+  Inspector inspector;
 
-    struct EditorHolder : juce::Component, juce::ComponentListener
-    {
-        std::function<void()> onChildResized;
-        void componentMovedOrResized (juce::Component&, bool, bool wasResized) override
-        {
-            if (wasResized && onChildResized) onChildResized();
-        }
-    };
-    EditorHolder editorHolder;
-    DesignerOverlay designer;
+  struct EditorHolder : juce::Component, juce::ComponentListener {
+    std::function<void()> onChildResized;
+    void componentMovedOrResized(juce::Component &, bool,
+                                 bool wasResized) override {
+      if (wasResized && onChildResized)
+        onChildResized();
+    }
+  };
+  EditorHolder editorHolder;
+  DesignerOverlay designer;
 
-    juce::TextEditor problems;
+  juce::TextEditor problems;
 
-    // Hosting
-    juce::AudioDeviceManager deviceManager;
-    juce::AudioProcessorPlayer player;
-    std::unique_ptr<PluginProject> project;
-    std::unique_ptr<juce::AudioProcessorEditor> pluginEditor;
-    std::unique_ptr<juce::FileChooser> chooser;
+  // Hosting
+  juce::AudioDeviceManager deviceManager;
+  juce::AudioProcessorPlayer player;
+  std::unique_ptr<PluginProject> project;
+  std::unique_ptr<juce::AudioProcessorEditor> pluginEditor;
+  std::unique_ptr<juce::FileChooser> chooser;
 
-    juce::File lastDir;
-    BuildRunner buildRunner;
+  juce::File lastDir;
+  BuildRunner buildRunner;
 
-    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (StudioMainComponent)
+  JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(StudioMainComponent)
 };
 
 } // namespace dmse_studio
