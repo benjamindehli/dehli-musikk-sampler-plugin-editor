@@ -56,13 +56,16 @@ transcodeToFlac(const juce::File &source, const juce::File &destDir,
                // range)
 
   juce::FlacAudioFormat flac;
-  std::unique_ptr<juce::AudioFormatWriter> writer(flac.createWriterFor(
-      stream.get(), reader->sampleRate, reader->numChannels, bits, {}, 0));
+  std::unique_ptr<juce::OutputStream> owned = std::move(stream);
+  auto writer = flac.createWriterFor(
+      owned, juce::AudioFormatWriterOptions{}
+                 .withSampleRate(reader->sampleRate)
+                 .withNumChannels((int)reader->numChannels)
+                 .withBitsPerSample(bits)); // takes ownership of the stream
   if (writer == nullptr) {
     error = "cannot create FLAC writer for " + out.getFullPathName();
     return std::nullopt;
   }
-  stream.release(); // writer owns the stream now
 
   const bool ok =
       writer->writeFromAudioReader(*reader, 0, reader->lengthInSamples);
