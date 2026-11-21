@@ -131,7 +131,17 @@ public:
   const dm::ManifestParseResult &getLint() const { return lint; }
   juce::File getRepoRoot() const { return repoRoot; }
   juce::File getSamplesDir() const { return assetsDir.getChildFile("samples"); }
-  juce::String getName() const { return repoRoot.getFileName(); }
+  // The product name and version from the repo's CMakeLists.txt
+  // (dmse_add_plugin's PRODUCT_NAME and VERSION), so the plugin shows the name
+  // and version a player sees. The folder name and "studio" without them.
+  juce::String getName() const {
+    const auto name = cmakeValue("PRODUCT_NAME");
+    return name.isNotEmpty() ? name : repoRoot.getFileName();
+  }
+  juce::String getVersion() const {
+    const auto version = cmakeValue("VERSION");
+    return version.isNotEmpty() ? version : juce::String("studio");
+  }
 
   ~PluginProject() = default;
 
@@ -154,7 +164,7 @@ private:
 
     dm::ManifestPluginProcessor::Assets a;
     a.name = getName();
-    a.version = "studio";
+    a.version = getVersion();
     a.manifestJson = manifestJsonUtf8.c_str();
     a.manifestJsonSize = (int)manifestJsonUtf8.size();
     a.packFile = assetsDir.getChildFile("samples").getChildFile("samples.pak");
@@ -213,6 +223,23 @@ private:
     // were on instead (also triggers the first build after the restore).
     processor->confirmModeChoice(
         juce::jlimit(0, juce::jmax(0, model.modes.size() - 1), modeIndex));
+  }
+
+  // A value from dmse_add_plugin in the repo's CMakeLists.txt, such as
+  // PRODUCT_NAME "SubC" or VERSION 2.1.0, or empty.
+  juce::String cmakeValue(const juce::String &key) const {
+    const auto text =
+        repoRoot.getChildFile("CMakeLists.txt").loadFileAsString();
+    for (auto line : juce::StringArray::fromLines(text)) {
+      line = line.trim();
+      if (!line.startsWith(key + " ") && !line.startsWith(key + "\t"))
+        continue;
+      const auto value = line.substring(key.length()).trim();
+      if (value.startsWithChar('"')) // quoted: may hold spaces
+        return value.substring(1).upToFirstOccurrenceOf("\"", false, false);
+      return value.upToFirstOccurrenceOf(" ", false, false);
+    }
+    return {};
   }
 
   juce::File repoRoot, assetsDir;

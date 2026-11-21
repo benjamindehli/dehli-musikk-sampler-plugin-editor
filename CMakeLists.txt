@@ -52,3 +52,14 @@ target_link_libraries(DmseStudioProbe PRIVATE
     dehli_musikk_sampler_engine
     juce::juce_audio_utils
     juce::juce_recommended_config_flags)
+
+# Renders an instrument's Screenshots/ images from its recipe, see
+# tools/Screenshots.cpp. Run through ./dmse screenshots in the workspace.
+juce_add_console_app(DmseScreenshots PRODUCT_NAME "dmse-screenshots")
+target_sources(DmseScreenshots PRIVATE tools/Screenshots.cpp)
+target_compile_definitions(DmseScreenshots PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0)
+target_link_libraries(DmseScreenshots PRIVATE
+    dehli_musikk_sampler_engine
+    juce::juce_audio_utils
+    juce::juce_recommended_config_flags
+    juce::juce_recommended_warning_flags)
