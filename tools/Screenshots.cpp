@@ -22,12 +22,17 @@
 // "overlay": false leaves the instrument's overlay, such as scan lines, out of
 // a crop. "strip": { "id": "btn_1", "count": 2, "gap": 24 } puts the crop in
 // each of a button's first count states side by side, gap face pixels apart
-// on black, to show every choice the button offers.
+// with the gap left transparent, to show every choice the button offers.
+// "settings": true opens the Settings panel, as its button does. "spotlight"
+// is a rectangle of the face, in the same pixels as "crop", left as it is
+// while the rest of the crop is blurred and dimmed, to point at one thing.
 // "set" puts controls into a state as a person would: a knob by its label or id
 // to a value in its range, a button by id to a state index, a menu by id to an
 // option index. A name the face does not have is taken as the id of one of the
 // plugin's own parameters, such as "pitchDrift" and "volumeDrift" for the drift
-// wheels beside the keyboard, set to a value in its range. Every shot starts from a fresh instance in its mode, so shots
+// wheels beside the keyboard, set to a value in its range. Failing that, it is
+// the name a screen reader gives one of the editor's own sliders, such as "Mod
+// wheel", set to a value in the slider's range. Every shot starts from a fresh instance in its mode, so shots
 // do not depend on each other. The samples are not needed: the face, the
 // keyboard and the strips are drawn the same without them.
 //
@@ -54,6 +59,8 @@ struct Shot {
   juce::NamedValueSet set;
   float scale = 0.0f; // 0 is the recipe's scale
   bool overlay = true;
+  bool settings = false;
+  juce::Rectangle<int> spotlight;
   juce::String strip;
   int stripCount = 0, stripGap = 0;
 };
@@ -81,12 +88,41 @@ private:
   juce::TextButton options{"Options"};
 };
 
+// Blurs the picture by about a face pixel and dims it to half, except inside
+// the area, which keeps its own pixels within slightly rounded corners.
+juce::Image spotlit(const juce::Image &sharp, juce::Rectangle<float> area,
+                    float scale) {
+  auto image = sharp.createCopy();
+  juce::ImageConvolutionKernel blur(juce::roundToInt(scale * 6.0f) | 1);
+  blur.createGaussianBlur(scale);
+  blur.applyToImage(image, sharp, image.getBounds());
+  juce::Graphics g(image);
+  g.setColour(juce::Colours::black.withAlpha(0.5f));
+  g.fillAll();
+  juce::Path box;
+  box.addRoundedRectangle(area, scale * 1.5f);
+  g.reduceClipRegion(box);
+  g.drawImageAt(sharp, 0, 0);
+  return image;
+}
+
 template <typename T> T *findChild(juce::Component &root) {
   for (auto *child : root.getChildren()) {
     if (auto *t = dynamic_cast<T *>(child))
       return t;
     if (auto *t = findChild<T>(*child))
       return t;
+  }
+  return nullptr;
+}
+
+juce::Button *findButton(juce::Component &root, const juce::String &text) {
+  for (auto *child : root.getChildren()) {
+    if (auto *button = dynamic_cast<juce::Button *>(child);
+        button != nullptr && button->getButtonText() == text)
+      return button;
+    if (auto *button = findButton(*child, text))
+      return button;
   }
   return nullptr;
 }
@@ -173,6 +209,13 @@ private:
           shot.set = set->getProperties();
         shot.scale = (float)(double)s.getProperty("scale", 0.0);
         shot.overlay = (bool)s.getProperty("overlay", true);
+        shot.settings = (bool)s.getProperty("settings", false);
+        const auto spotlight = s.getProperty("spotlight", {});
+        if (spotlight.isObject())
+          shot.spotlight = {(int)spotlight.getProperty("x", 0),
+                            (int)spotlight.getProperty("y", 0),
+                            (int)spotlight.getProperty("width", 0),
+                            (int)spotlight.getProperty("height", 0)};
         const auto strip = s.getProperty("strip", {});
         if (strip.isObject()) {
           shot.strip = strip.getProperty("id", {}).toString();
@@ -266,10 +309,37 @@ private:
     for (const auto &setting : shot.set)
       if (!face->setValueById(setting.name.toString(),
                               (double)setting.value) &&
-          !setParameter(setting.name.toString(), (float)setting.value))
-        return fail(shot.file + ": nothing on the face or among the plugin's "
-                                "parameters is called \"" +
+          !setParameter(setting.name.toString(), (float)setting.value) &&
+          !setSlider(setting.name.toString(), (double)setting.value))
+        return fail(shot.file + ": nothing on the face, among the plugin's "
+                                "parameters or among the editor's sliders is "
+                                "called \"" +
                     setting.name.toString() + "\"");
+    if (shot.settings) {
+      auto *button = findButton(*editor, "Settings");
+      if (button == nullptr || !button->onClick)
+        return fail(shot.file + ": the editor has no Settings button");
+      button->onClick();
+    }
+    return true;
+  }
+
+  bool setSlider(const juce::String &title, double value) {
+    std::function<juce::Slider *(juce::Component &)> find =
+        [&](juce::Component &root) -> juce::Slider * {
+      for (auto *child : root.getChildren()) {
+        if (auto *slider = dynamic_cast<juce::Slider *>(child);
+            slider != nullptr && slider->getTitle() == title)
+          return slider;
+        if (auto *slider = find(*child))
+          return slider;
+      }
+      return nullptr;
+    };
+    auto *slider = find(*editor);
+    if (slider == nullptr)
+      return false;
+    slider->setValue(value, juce::sendNotificationSync);
     return true;
   }
 
@@ -306,6 +376,11 @@ private:
       face->setOverlayShown(shot.overlay);
       if (shot.strip.isEmpty()) {
         image = snapshot();
+        if (!shot.spotlight.isEmpty())
+          image = spotlit(image,
+                          (shot.spotlight - shot.crop.getPosition()).toFloat() *
+                              shotScale,
+                          shotScale);
       } else {
         std::vector<juce::Image> states;
         for (int state = 0; state < shot.stripCount; ++state) {
@@ -322,7 +397,6 @@ private:
         }
         image = juce::Image(juce::Image::ARGB, width, height, true);
         juce::Graphics g(image);
-        g.fillAll(juce::Colours::black);
         int x = 0;
         for (const auto &state : states) {
           g.drawImageAt(state, x, 0);
