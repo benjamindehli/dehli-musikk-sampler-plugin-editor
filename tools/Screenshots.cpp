@@ -17,6 +17,12 @@
 //
 // "window" renders the whole standalone window, title bar included. "crop" is a
 // rectangle of the instrument's face, in the face's own pixels before scaling.
+// A shot can have a "scale" of its own, such as 1.3333 for a face drawn at
+// three quarters of its artwork, so the image shows the artwork's own pixels.
+// "overlay": false leaves the instrument's overlay, such as scan lines, out of
+// a crop. "strip": { "id": "btn_1", "count": 2, "gap": 24 } puts the crop in
+// each of a button's first count states side by side, gap face pixels apart
+// on black, to show every choice the button offers.
 // "set" puts controls into a state as a person would: a knob by its label or id
 // to a value in its range, a button by id to a state index, a menu by id to an
 // option index. A name the face does not have is taken as the id of one of the
@@ -46,6 +52,10 @@ struct Shot {
   bool window = false;
   juce::Rectangle<int> crop;
   juce::NamedValueSet set;
+  float scale = 0.0f; // 0 is the recipe's scale
+  bool overlay = true;
+  juce::String strip;
+  int stripCount = 0, stripGap = 0;
 };
 
 // The standalone app's window as JUCE's StandaloneFilterWindow builds it: a
@@ -161,6 +171,16 @@ private:
                        (int)crop.getProperty("height", 0)};
         if (auto *set = s.getProperty("set", {}).getDynamicObject())
           shot.set = set->getProperties();
+        shot.scale = (float)(double)s.getProperty("scale", 0.0);
+        shot.overlay = (bool)s.getProperty("overlay", true);
+        const auto strip = s.getProperty("strip", {});
+        if (strip.isObject()) {
+          shot.strip = strip.getProperty("id", {}).toString();
+          shot.stripCount = (int)strip.getProperty("count", 0);
+          shot.stripGap = (int)strip.getProperty("gap", 0);
+          if (shot.strip.isEmpty() || shot.stripCount < 1)
+            return fail(shot.file + ": a strip needs an id and a count");
+        }
         if (shot.file.isEmpty() || (!shot.window && shot.crop.isEmpty()))
           return fail("a shot needs a file, and a crop unless it is a window");
         if (only.isEmpty() || only == shot.file)
@@ -264,18 +284,51 @@ private:
   }
 
   bool save(const Shot &shot) {
+    const auto shotScale = shot.scale > 0.0f ? shot.scale : scale;
     juce::Image image;
     if (shot.window) {
       image = window->createComponentSnapshot(window->getLocalBounds(), true,
-                                              scale);
+                                              shotScale);
     } else {
       auto *face = findChild<dm::ManifestUiComponent>(*editor);
       if (face == nullptr)
         return fail(shot.file + ": the editor has no face");
-      // From the editor rather than the face, so a layer drawn over the face,
-      // such as an instrument's overlay, is in the picture as it is on screen.
-      const auto area = editor->getLocalArea(face, shot.crop);
-      image = editor->createComponentSnapshot(area, true, scale);
+      const auto snapshot = [&] {
+        // From the editor rather than the face, so a layer drawn over the
+        // face, such as an instrument's overlay, is in the picture as it is
+        // on screen. Without the overlay, from the face alone, which leaves
+        // out such a layer too.
+        if (!shot.overlay)
+          return face->createComponentSnapshot(shot.crop, true, shotScale);
+        const auto area = editor->getLocalArea(face, shot.crop);
+        return editor->createComponentSnapshot(area, true, shotScale);
+      };
+      face->setOverlayShown(shot.overlay);
+      if (shot.strip.isEmpty()) {
+        image = snapshot();
+      } else {
+        std::vector<juce::Image> states;
+        for (int state = 0; state < shot.stripCount; ++state) {
+          if (!face->setValueById(shot.strip, state))
+            return fail(shot.file + ": nothing on the face is called \"" +
+                        shot.strip + "\"");
+          states.push_back(snapshot());
+        }
+        const auto gap = juce::roundToInt((float)shot.stripGap * shotScale);
+        int width = gap * (shot.stripCount - 1), height = 0;
+        for (const auto &state : states) {
+          width += state.getWidth();
+          height = juce::jmax(height, state.getHeight());
+        }
+        image = juce::Image(juce::Image::ARGB, width, height, true);
+        juce::Graphics g(image);
+        g.fillAll(juce::Colours::black);
+        int x = 0;
+        for (const auto &state : states) {
+          g.drawImageAt(state, x, 0);
+          x += state.getWidth() + gap;
+        }
+      }
     }
 
     const auto file = outDir.getChildFile(shot.file);
