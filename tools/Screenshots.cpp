@@ -261,6 +261,7 @@ private:
         return;
       if (!applySettings(shot))
         return abandon();
+      playSilentBlock();
       stage = Stage::settling;
       ticks = 0;
       return;
@@ -292,6 +293,7 @@ private:
     // The editor themes the window only when it may treat it as its own.
     processor.setEditorManagesWindow(shot.window);
     processor.confirmModeChoice(juce::jmax(0, modeIndex));
+    processor.prepareToPlay(48000.0, blockSize);
 
     editor.reset(processor.createEditor());
     if (shot.window) {
@@ -322,6 +324,23 @@ private:
       button->onClick();
     }
     return true;
+  }
+
+  // Some settings, such as the strum's tempo sync, reach the sound engine only
+  // while it plays, and the editor shows what the engine reports, so the
+  // plugin is prepared as it opens and plays one silent block once the
+  // controls are set.
+  static constexpr int blockSize = 512;
+
+  void playSilentBlock() {
+    auto &processor = project->getProcessor();
+    juce::AudioBuffer<float> block(
+        juce::jmax(processor.getTotalNumInputChannels(),
+                   processor.getTotalNumOutputChannels()),
+        blockSize);
+    block.clear();
+    juce::MidiBuffer midi;
+    processor.processBlock(block, midi);
   }
 
   bool setSlider(const juce::String &title, double value) {
@@ -421,6 +440,8 @@ private:
       window->clearContentComponent();
     window.reset();
     editor.reset();
+    if (project != nullptr)
+      project->getProcessor().releaseResources();
     project.reset();
   }
 
