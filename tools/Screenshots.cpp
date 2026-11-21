@@ -19,7 +19,9 @@
 // rectangle of the instrument's face, in the face's own pixels before scaling.
 // "set" puts controls into a state as a person would: a knob by its label or id
 // to a value in its range, a button by id to a state index, a menu by id to an
-// option index. Every shot starts from a fresh instance in its mode, so shots
+// option index. A name the face does not have is taken as the id of one of the
+// plugin's own parameters, such as "pitchDrift" and "volumeDrift" for the drift
+// wheels beside the keyboard, set to a value in its range. Every shot starts from a fresh instance in its mode, so shots
 // do not depend on each other. The samples are not needed: the face, the
 // keyboard and the strips are drawn the same without them.
 //
@@ -47,14 +49,16 @@ struct Shot {
 };
 
 // The standalone app's window as JUCE's StandaloneFilterWindow builds it: a
-// document window with an Options button in its title bar. The editor themes
-// it, as it themes the real one.
+// document window with an Options button at the left of its title bar and the
+// window buttons at the right on every system. The editor themes it, as it
+// themes the real one.
 class ShotWindow final : public juce::DocumentWindow {
 public:
   explicit ShotWindow(const juce::String &title)
       : juce::DocumentWindow(title, juce::Colours::black,
                              minimiseButton | closeButton, false) {
     setUsingNativeTitleBar(false);
+    setTitleBarButtonsRequired(minimiseButton | closeButton, false);
     Component::addAndMakeVisible(options);
   }
 
@@ -240,10 +244,23 @@ private:
     if (face == nullptr)
       return fail(shot.file + ": the editor has no face");
     for (const auto &setting : shot.set)
-      if (!face->setValueById(setting.name.toString(), (double)setting.value))
-        return fail(shot.file + ": nothing on the face is called \"" +
+      if (!face->setValueById(setting.name.toString(),
+                              (double)setting.value) &&
+          !setParameter(setting.name.toString(), (float)setting.value))
+        return fail(shot.file + ": nothing on the face or among the plugin's "
+                                "parameters is called \"" +
                     setting.name.toString() + "\"");
     return true;
+  }
+
+  bool setParameter(const juce::String &id, float value) {
+    for (auto *parameter : project->getProcessor().getParameters())
+      if (auto *ranged = dynamic_cast<juce::RangedAudioParameter *>(parameter);
+          ranged != nullptr && ranged->getParameterID() == id) {
+        ranged->setValueNotifyingHost(ranged->convertTo0to1(value));
+        return true;
+      }
+    return false;
   }
 
   bool save(const Shot &shot) {
