@@ -165,8 +165,11 @@ public:
               this, {NodeRef::Kind::button, mi, i},
               "button: " + buttonName(tab.buttons.getReference(i), i)));
         for (int i = 0; i < tab.menus.size(); ++i)
-          uiItem->addSubItem(new Item(this, {NodeRef::Kind::menu, mi, i},
-                                      "menu " + juce::String(i)));
+          uiItem->addSubItem(
+              new Item(this, {NodeRef::Kind::menu, mi, i},
+                       tab.menus.getReference(i).label.isNotEmpty()
+                           ? "menu: " + tab.menus.getReference(i).label
+                           : "menu " + juce::String(i)));
         for (int i = 0; i < tab.images.size(); ++i)
           uiItem->addSubItem(
               new Item(this, {NodeRef::Kind::image, mi, i},
@@ -195,6 +198,8 @@ private:
   }
 
   juce::String buttonName(const dm::Button &b, int index) const {
+    if (b.label.isNotEmpty())
+      return b.label;
     if (b.id.isNotEmpty() && !b.id.startsWith("btn_"))
       return b.id;
     if (!b.states.isEmpty() && b.states.getReference(0).name.isNotEmpty())

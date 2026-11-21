@@ -281,6 +281,11 @@ public:
     case NodeRef::Kind::button: {
       title.setText("Button", juce::dontSendNotification);
       if (auto *b = button(ref)) {
+        // What a screen reader and the host call it. Empty: made from what
+        // the state names share, or "Button <n>".
+        props.add(text(
+            "Label", [this, ref] { return button(ref)->label; },
+            [this, ref](const juce::String &v) { button(ref)->label = v; }));
         props.add(readOnly("Id / states", b->id + "  (" +
                                               juce::String(b->states.size()) +
                                               " states)"));
@@ -295,6 +300,10 @@ public:
     case NodeRef::Kind::menu: {
       title.setText("Menu", juce::dontSendNotification);
       if (auto *m = menu(ref)) {
+        // What a screen reader calls it. Empty: "Menu <n>".
+        props.add(text(
+            "Label", [this, ref] { return menu(ref)->label; },
+            [this, ref](const juce::String &v) { menu(ref)->label = v; }));
         props.add(readOnly("Options", juce::String(m->options.size())));
         addRect(props, [this, ref]() -> dm::Rect & { return menu(ref)->rect; });
       }
