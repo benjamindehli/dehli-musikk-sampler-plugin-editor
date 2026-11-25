@@ -297,8 +297,14 @@ private:
 
     editor.reset(processor.createEditor());
     if (shot.window) {
+      // The editor themes the window as it joins it, which lays the window
+      // out at its first, smallest size and squeezes the editor to fit. A
+      // mode that loads later puts the size right, a mode that is ready
+      // already does not, so the editor's own size is given back here.
+      const auto size = editor->getBounds();
       window = std::make_unique<ShotWindow>(project->getName());
       window->setContentNonOwned(editor.get(), true);
+      window->setContentComponentSize(size.getWidth(), size.getHeight());
     }
     return true;
   }
